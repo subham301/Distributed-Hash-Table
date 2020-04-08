@@ -1,7 +1,6 @@
 import java.io.DataOutputStream;
 import java.net.Socket;
 import java.util.NavigableSet;
-import java.util.TreeSet;
 import java.util.concurrent.ConcurrentNavigableMap;
 import java.util.concurrent.ConcurrentSkipListMap;
 
@@ -97,30 +96,14 @@ class AppServerTaskHandler extends Thread {
       }
 
       /**
-       * GET_ALL <FROM_KEY> <TO_KEY> ==> <KEY1> <VALUE1> <KEY2> <VALUE2> <KEY3>
-       * <VALUE3> .... <KEYN> <VALUEN>
-       */
-      else if (parameters[0].compareToIgnoreCase("GET_ALL") == 0) {
-        ConcurrentNavigableMap<Integer, Integer> myMap = this.appServer
-            .getKeyValueInRange(Integer.valueOf(parameters[2]), Integer.valueOf(parameters[3]));
-
-        NavigableSet<Integer> keys = myMap.keySet();
-
-        String responseMessage = "";
-        for (Integer key : keys) {
-          responseMessage += " " + key + " " + myMap.get(key);
-        }
-        this.sendResponse(responseMessage);
-      }
-
-      /**
        * PUT_ALL <KEY1> <VALUE1> <KEY2> <VALUE2> <KEY3> <VALUE3> .... <KEYN> <VALUEN>
        */
       else if (parameters[0].compareToIgnoreCase("PUT_ALL") == 0) {
-        if (parameters.length % 2 != 0) {
+        if (parameters.length % 2 != 1) {
           // The message is not well formed
           throw new IndexOutOfBoundsException();
         }
+        System.out.println(task);
         ConcurrentNavigableMap<Integer, Integer> store = new ConcurrentSkipListMap<>();
 
         // build up the store with the <key, value> pair
@@ -164,10 +147,14 @@ class AppServerTaskHandler extends Thread {
       }
     } catch (IndexOutOfBoundsException e) {
       // INVALID OPERATION
-      this.sendResponse("Invalid Request! Please check your request message and try again!");
+      // this.sendResponse("Invalid Request! Please check your request message and try
+      // again!");
+      e.printStackTrace();
     } catch (NumberFormatException e) {
       // INVALID OPERATION
-      this.sendResponse("Invalid Request! Please check your request message and try again!");
+      // this.sendResponse("Invalid Request! Please check your request message and try
+      // again!");
+      e.printStackTrace();
     }
   }
 

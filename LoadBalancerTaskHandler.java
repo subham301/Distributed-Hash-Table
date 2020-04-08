@@ -45,6 +45,8 @@ public class LoadBalancerTaskHandler extends Thread {
         // 4th position is the KEY
         ServerInfo correctServer = loadBalancer.getCorrectServer(Integer.valueOf(parameters[4]));
 
+        System.out.println("CORRECT_SERVER: " + correctServer);
+
         if (correctServer == null) {
           // There is no server available to handle the requests
           assert (false);
@@ -56,7 +58,7 @@ public class LoadBalancerTaskHandler extends Thread {
         // Message: <CLIENT_IP> <CLIENT_PORT> <TASK => <OPERATION PARAMETERS> >
         String messageToSend = "";
         for (int j = 1; j < parameters.length; j++) {
-          messageToSend += parameters[j];
+          messageToSend += parameters[j] + " ";
         }
         outStream.writeUTF(messageToSend);
         outStream.flush();

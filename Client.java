@@ -1,4 +1,5 @@
 import java.io.BufferedReader;
+import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.io.InputStreamReader;
@@ -8,13 +9,17 @@ public class Client {
   public static void main(String args[]) {
     // <CLIENT_IP> <CLIENT_PORT> <LOAD_BALANCER_IP> <LOAD_BALANCER_PORT>
 
-    String clientIP = args[0];
-    String loadBalancerIP = args[2];
+    String clientIP;
+    String loadBalancerIP;
     int clientPort = -1, loadBalancerPort = -1;
 
     try {
       if (args.length != 4)
         throw new NumberFormatException();
+
+      clientIP = args[0];
+      loadBalancerIP = args[2];
+
       clientPort = Integer.valueOf(args[1]);
       loadBalancerPort = Integer.valueOf(args[3]);
     } catch (NumberFormatException e) {
@@ -50,7 +55,7 @@ public class Client {
           Socket socket = new Socket(loadBalancerIP, loadBalancerPort);
 
           // build the <TASK> message
-          String task = clientIP + " " + clientPort + " ";
+          String task = "CLIENT" + " " + clientIP + " " + clientPort + " ";
           if (operation == 1) {
             System.out.print("Enter the key to insert and press enter: ");
             String key = reader.readLine();
@@ -58,6 +63,7 @@ public class Client {
             String value = reader.readLine();
 
             try {
+              task += "PUT" + " ";
               task += Integer.valueOf(key) + " " + Integer.valueOf(value);
             } catch (NumberFormatException e) {
               System.out.println("Invalid choice! Try again...\n");
@@ -67,6 +73,7 @@ public class Client {
             String key = reader.readLine();
 
             try {
+              task += "GET" + " ";
               task += Integer.valueOf(key);
             } catch (NumberFormatException e) {
               System.out.println("Invalid choice! Try again...\n");
@@ -79,6 +86,14 @@ public class Client {
           out.close();
 
           socket.close();
+
+          // wait for the response
+          ServerSocket response = new ServerSocket(clientPort);
+          socket = response.accept();
+          DataInputStream in = new DataInputStream(socket.getInputStream());
+          System.out.println("RESPONSE: " + in.readUTF());
+          in.close();
+          response.close();
         }
 
         // Take the user's choice

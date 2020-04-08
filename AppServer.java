@@ -2,6 +2,7 @@ import java.io.DataInputStream;
 import java.io.DataOutputStream;
 import java.net.ServerSocket;
 import java.net.Socket;
+import java.util.ArrayList;
 import java.util.NavigableSet;
 import java.util.concurrent.ConcurrentNavigableMap;
 import java.util.concurrent.ConcurrentSkipListMap;
@@ -11,6 +12,13 @@ public class AppServer {
 
   // Store all the <Key, Value> pairs
   private ConcurrentSkipListMap<Integer, Integer> store;
+  /**
+   * Store the mapping of <KEY_HASH, LIST<KEY having hash as <KEY_HASH>>> Used
+   * when we have to re-distribute.
+   * 
+   * The actual query will be --> all the keys whose hash is between <L, R>
+   */
+  private ConcurrentSkipListMap<Integer, ArrayList<Integer>> keyHashStore;
   // The address of the Load-Balancer
   private String loadBalancerIP;
   private int loadBalancerPort;
@@ -22,6 +30,7 @@ public class AppServer {
 
   public AppServer(String loadBalancerIP, int loadBalancerPort, int serverID, String ipAdress, int listeningPort) {
     store = new ConcurrentSkipListMap<>();
+    keyHashStore = new ConcurrentSkipListMap<>();
 
     this.loadBalancerIP = loadBalancerIP;
     this.loadBalancerPort = loadBalancerPort;
@@ -38,15 +47,25 @@ public class AppServer {
 
   // store the given <key, value> pair
   public void put(int key, int value) {
+    System.out.println("PUT <" + key + " " + value + ">");
+
     if (store.containsKey(key)) {
       store.replace(key, value);
       return;
     }
+    // store the key with value
     store.put(key, value);
+    // store the key with it's hash
+    if (!keyHashStore.containsKey(LoadBalancer.keyHash(key))) {
+      keyHashStore.put(LoadBalancer.keyHash(key), new ArrayList<>());
+    }
+    keyHashStore.get(LoadBalancer.keyHash(key)).add(key);
   }
 
   // Returns the value that corresponds to given 'key'
   public int get(int key) {
+    System.out.println("GET <" + key + ">");
+
     if (store.containsKey(key)) {
       return store.get(key);
     }
@@ -55,18 +74,51 @@ public class AppServer {
 
   // get a map of <key, value> pair in the range (startKey, endKey)
   public ConcurrentNavigableMap<Integer, Integer> getKeyValueInRange(int startKey, int endKey) {
-    return store.subMap(startKey, endKey);
+    System.out.println("getKeyValueInRange <" + startKey + " " + endKey + ">");
+
+    // Prepare a map from the keyHashStore
+    ConcurrentNavigableMap<Integer, ArrayList<Integer>> filteredKeyHashStore = keyHashStore.subMap(startKey, endKey);
+
+    ConcurrentNavigableMap<Integer, Integer> result = new ConcurrentSkipListMap<>();
+    for (Integer keyHash : filteredKeyHashStore.keySet()) {
+      for (Integer key : filteredKeyHashStore.get(keyHash)) {
+        result.put(key, store.get(key));
+      }
+    }
+
+    return result;
   }
 
   // store a map of <key, value> pairs
   public void putKeyValues(ConcurrentNavigableMap<Integer, Integer> additionalStore) {
-    store.putAll(additionalStore);
+    // ****************************DEBUGGING PART******************************
+    System.out.print("putKeyValues: <");
+    NavigableSet<Integer> keys = additionalStore.keySet();
+    for (Integer key : keys) {
+      System.out.print("<" + key + " " + additionalStore.get(key) + "> ");
+    }
+    System.out.println(">");
+    // ****************************DEBUGGING PART******************************
+
+    for (Integer key : additionalStore.keySet()) {
+      // To correctly insert into the "KEY_HASH_STORE" also
+      this.put(key, additionalStore.get(key));
+    }
   }
 
   // remove all the <keys> in the given set from our STORE
   public void removeKeyValues(NavigableSet<Integer> oldKeys) {
+    // ****************************DEBUGGING PART******************************
+    System.out.print("removeKeyValues: <");
+    for (Integer key : oldKeys) {
+      System.out.print("<" + key + "> ");
+    }
+    System.out.println(">");
+    // ****************************DEBUGGING PART******************************
+
     for (Integer key : oldKeys) {
       store.remove(key);
+      keyHashStore.get(LoadBalancer.keyHash(key)).remove(key);
     }
   }
 
@@ -88,17 +140,19 @@ public class AppServer {
       // Listens to a port for an incoming connection request
       ServerSocket server = new ServerSocket(this.LISTENING_PORT);
       while (true) {
+        System.out.println("Listening on port " + this.LISTENING_PORT + " ....");
         // accept an incoming connection
         Socket clientRequest = server.accept();
         try {
           DataInputStream dis = new DataInputStream(clientRequest.getInputStream());
 
           // Client-Message must be in form "<DEST_IP> <DEST_PORT> <ACTUAL_MESSAGE>"
-          String clientMessage = (String) dis.readUTF();
+          String clientMessage = (String) dis.readUTF().trim();
           // Try to split the different part of message and if any of it is unavailable
           // then it means that message is not well structured and ignore it
           // Message: <DEST_IP> <DEST_PORT> <TASK => <OPERATION PARAMETERS> >
           String[] parameters = clientMessage.split(" ", 3);
+
           if (parameters.length < 3)
             throw new IndexOutOfBoundsException();
 
@@ -110,10 +164,11 @@ public class AppServer {
 
         } catch (IndexOutOfBoundsException e) {
           // Malformed message
-          // TODO: send response if required in future
+          e.printStackTrace();
         } catch (NumberFormatException e) {
           // Malformed message
           // TODO: send response if required in future
+          e.printStackTrace();
         }
       }
 
@@ -124,7 +179,11 @@ public class AppServer {
   }
 
   public static void main(String args[]) {
-    // TODO: make an AppServer object and properly initialize all values
+    if (args.length != 5) {
+      System.out.println("Invalid arguments. Please provide arguments in the following format -->");
+      System.out.println("[<L.B_IP> <L.B_port> <SERVER_ID> <MY_IP> <MY_PORT_TO_LISTEN_FOR_REQUEST>]");
+      return;
+    }
     // Arguments passed:
     // <L.B_IP> <L.B_port> <SERVER_ID> <MY_IP> <MY_PORT_TO_LISTEN_FOR_REQUEST>
     try {

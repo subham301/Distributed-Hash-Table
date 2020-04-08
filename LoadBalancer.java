@@ -35,6 +35,10 @@ class LoadBalancer {
     return (int) ans;
   }
 
+  public static int keyHash(int key) {
+    return fastPow(3, key);
+  }
+
   private static boolean isPrime(int x) {
     for (int j = 2; j * j <= x; j++) {
       if (x % j == 0)
@@ -86,6 +90,9 @@ class LoadBalancer {
    * correctly or not
    */
   public boolean reDistributeLoad(ServerInfo from, ServerInfo to, int L, int R) {
+    // ******************** DEBUGGING PART ***********************
+    System.out.println("reDistributeLoad: <" + from + " " + to + " (" + L + " " + R + ")>");
+    // ******************** DEBUGGING PART ***********************
     /**
      * **********************************************************************************
      * All the message to the server is of the form =>
@@ -125,6 +132,8 @@ class LoadBalancer {
 
   // add the new server having id "serverID"
   public void addServer(ServerInfo serverInfo) {
+    System.out.println("ADDSERVER: " + serverInfo);
+
     // Store the serverInfo with the loadBalancer itself
     servers.put(serverInfo.getID(), serverInfo);
     // List of all the positions after which and before the next server this server
@@ -176,6 +185,9 @@ class LoadBalancer {
     }
     // Store the positions of the current server in the RING
     serverPosition.put(serverInfo.getID(), curServerPositions);
+
+    // print the current status of the server
+    this.debugInfo();
   }
 
   // // remove the server having id "serverID"
@@ -190,8 +202,12 @@ class LoadBalancer {
 
   // get the serverID which is reponsible for the mentioned "key"
   public ServerInfo getCorrectServer(int key) {
-    int positionInRing = fastPow(3, key);
+    int positionInRing = keyHash(key);
+
+    System.out.println("getCorrectServer: " + key + " -> " + positionInRing);
+
     RingElement serverHavingKey = consistentRing.ceiling(new RingElement(positionInRing, null));
+    System.out.println(serverHavingKey);
     if (serverHavingKey == null) {
       if (consistentRing.isEmpty())
         return null;
@@ -208,6 +224,7 @@ class LoadBalancer {
       ServerSocket server = new ServerSocket(this.PORT);
 
       while (true) {
+        System.out.println("Listening on port " + this.PORT + " ...");
         try {
           Socket request = server.accept();
 
@@ -252,6 +269,11 @@ class LoadBalancer {
 
   public static void main(String args[]) {
 
+    if (args.length != 2) {
+      System.out.println("Invalid arguments! Please pass [<IP> <PORT>].");
+      return;
+    }
+
     /**
      * PARAMETERS TO BE PASSED AS COMMAND LINE ARGUMENTS
      * 
@@ -259,7 +281,6 @@ class LoadBalancer {
      * 
      * PORT => PORT on which LoadBalancer listens for request
      */
-
     try {
       LoadBalancer loadBalancer = new LoadBalancer(args[0], Integer.valueOf(args[1]));
       loadBalancer.initiate();
