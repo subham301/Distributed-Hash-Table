@@ -1,4 +1,11 @@
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
+import java.io.IOException;
+import java.net.ServerSocket;
+import java.net.Socket;
 import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentSkipListSet;
 
 class LoadBalancer {
 
@@ -53,73 +60,174 @@ class LoadBalancer {
   // ********* Static functions and data-members ENDS ***************
 
   // store the (position, serverID) in the consistent ring
-  private TreeSet<RingElement> consistentRing;
+  private ConcurrentSkipListSet<RingElement> consistentRing;
   // Store the list of position to which a particular server is mapped
   private Map<Integer, List<Integer>> serverPosition;
-  // TODO: remove this using SOCKETS
-  private Map<Integer, AppServer> servers;
+  // store the serverInfo for a particular SERVER_ID
+  private Map<Integer, ServerInfo> servers;
+  // Listening port and IP
+  private final String IP;
+  private final int PORT;
 
-  public LoadBalancer() {
-    consistentRing = new TreeSet<>();
-    serverPosition = new HashMap<>();
-    // TODO: update it accordingly
-    servers = new HashMap<>();
+  public LoadBalancer(String ip, int port) {
+    this.IP = ip;
+    this.PORT = port;
+
+    consistentRing = new ConcurrentSkipListSet<RingElement>();
+    serverPosition = new ConcurrentHashMap<>();
+    servers = new ConcurrentHashMap<>();
+  }
+
+  /**
+   * Take the load in range [L, R] from the mentioned server and assign it to the
+   * other server
+   * 
+   * returns true or false depending on whether the re-distribution happened
+   * correctly or not
+   */
+  public boolean reDistributeLoad(ServerInfo from, ServerInfo to, int L, int R) {
+    /**
+     * **********************************************************************************
+     * All the message to the server is of the form =>
+     * 
+     * <DESTINATION_IP> <DESTINATION_PORT> <TASK>
+     * 
+     * ==> <TASK> ==>
+     * 
+     * PUT_ALL <KEY1> <VALUE1> <KEY2> <VALUE2> <KEY3> <VALUE3> .... <KEYN> <VALUEN>
+     * 
+     * RE_DISTRIBUTE <FROM_KEY> <TO_KEY>
+     * 
+     * PUT <KEY> <VALUE>
+     * 
+     * GET <KEY>
+     * 
+     * *********************************************************************************
+     */
+    try {
+      Socket socket = new Socket(from.getIP(), from.getPORT());
+      DataOutputStream outputStream = new DataOutputStream(socket.getOutputStream());
+
+      String task = "RE_DISTRIBUTE";
+      task += " " + L + " " + R;
+
+      outputStream.writeUTF(to.getIP() + " " + to.getPORT() + " " + task);
+      outputStream.flush();
+      outputStream.close();
+
+      socket.close();
+
+    } catch (Exception e) {
+      return false;
+    }
+    return true;
   }
 
   // add the new server having id "serverID"
-  public void addServer(int serverID) {
-    // TODO: change the next line accordingly when using SOCKETS
-    servers.put(serverID, new AppServer(serverID));
+  public void addServer(ServerInfo serverInfo) {
+    // Store the serverInfo with the loadBalancer itself
+    servers.put(serverInfo.getID(), serverInfo);
+    // List of all the positions after which and before the next server this server
+    // is responsible for
     List<Integer> curServerPositions = new ArrayList<>();
 
     for (int j = 1; j <= HASHES; j++) {
-      int position = getHash(serverID, j);
-      RingElement curElement = new RingElement(position, serverID);
+      int position = getHash(serverInfo.getID(), j);
+      RingElement curElement = new RingElement(position, serverInfo);
 
       RingElement validPosition = consistentRing.ceiling(curElement);
       if (validPosition == null || !validPosition.equals(curElement)) {
         // There are no server currently assigned to this position
         // So, we can assign current server here
         curServerPositions.add(position);
-        consistentRing.add(curElement);
       }
     }
-    // TODO: take the load from the neighbouring servers
-    serverPosition.put(serverID, curServerPositions);
+
+    if (servers.size() == 1) {
+      // It is the first server in our DISTRIBUTED SYSTEM
+    } else {
+      // take the load from the neighbouring servers
+      for (Integer position : curServerPositions) {
+        RingElement previousServer = consistentRing.lower(new RingElement(position, null));
+        if (previousServer == null) {
+          // The last server is handling the request
+          previousServer = consistentRing.last();
+        }
+
+        // TODO: Handle the case where we take the load from same server twice
+        RingElement nextServer = consistentRing.higher(new RingElement(position, null));
+        if (nextServer == null) {
+          // The next server is after the position 'MOD-1' in the ring
+          nextServer = consistentRing.first();
+          // from the side [L, MOD-1] and from [0, R]
+          // TODO: modify the logic server side to exclude the right end i.e [L, R)
+          this.reDistributeLoad(previousServer.getServerInfo(), serverInfo, position, MOD);
+          this.reDistributeLoad(previousServer.getServerInfo(), serverInfo, 0, nextServer.getPosition());
+        } else {
+          this.reDistributeLoad(previousServer.getServerInfo(), serverInfo, position, nextServer.getPosition());
+        }
+
+      }
+    }
+
+    // Add all the virtual server location in CONSISTENT RING
+    for (Integer position : curServerPositions) {
+      consistentRing.add(new RingElement(position, serverInfo));
+    }
+    // Store the positions of the current server in the RING
+    serverPosition.put(serverInfo.getID(), curServerPositions);
   }
 
-  // remove the server having id "serverID"
-  public void removeServer(int serverID) {
-    List<Integer> serverPositions = serverPosition.get(serverID);
-    for (Integer position : serverPositions) {
-      consistentRing.remove(new RingElement(position, serverID));
-    }
-    // TODO: add the logic of distributing the load among the active servers
-    serverPosition.remove(serverID);
-  }
+  // // remove the server having id "serverID"
+  // public void removeServer(int serverID) {
+  // List<Integer> serverPositions = serverPosition.get(serverID);
+  // for (Integer position : serverPositions) {
+  // consistentRing.remove(new RingElement(position, serverID));
+  // }
+  // // TODO: add the logic of distributing the load among the active servers
+  // serverPosition.remove(serverID);
+  // }
 
   // get the serverID which is reponsible for the mentioned "key"
-  public int getCorrectServer(int key) {
+  public ServerInfo getCorrectServer(int key) {
     int positionInRing = fastPow(3, key);
-    RingElement serverHavingKey = consistentRing.ceiling(new RingElement(positionInRing, -1));
+    RingElement serverHavingKey = consistentRing.ceiling(new RingElement(positionInRing, null));
     if (serverHavingKey == null) {
       if (consistentRing.isEmpty())
-        return -1;
-      return consistentRing.first().getServerID();
+        return null;
+      return consistentRing.first().getServerInfo();
     } else
-      return serverHavingKey.getServerID();
+      return serverHavingKey.getServerInfo();
   }
 
-  // TODO: write the logic to contact the correct server and put the keys
-  public void put(int key, int value) {
-    int serverID = getCorrectServer(key);
-    servers.get(serverID).put(key, value);
-  }
+  // Listen to a particular decided port for incoming request
+  // And then create LoadBalancerTaks and delegate the request to them for
+  // handling
+  public void initiate() {
+    try {
+      ServerSocket server = new ServerSocket(this.PORT);
 
-  // TODO: write the logic to contact the correct server and get the key
-  public int get(int key) {
-    int serverID = getCorrectServer(key);
-    return servers.get(serverID).get(key);
+      while (true) {
+        try {
+          Socket request = server.accept();
+
+          DataInputStream inputStream = new DataInputStream(request.getInputStream());
+          // Delegate the request to a new thread
+          new LoadBalancerTaskHandler(this, inputStream.readUTF()).start();
+          inputStream.close();
+
+        } catch (Exception e) {
+          // Will be here when there is some error with connecting to client
+          // TODO: update this in future if required
+
+        }
+      }
+
+    } catch (IOException e) {
+      // TODO update this if required in future
+      // Will be here when unable to listen to a port
+      e.printStackTrace();
+    }
   }
 
   public void debugInfo() {
@@ -143,40 +251,21 @@ class LoadBalancer {
   }
 
   public static void main(String args[]) {
-    LoadBalancer loadBalancer = new LoadBalancer();
 
-    loadBalancer.debugInfo();
-    loadBalancer.addServer(2);
-    loadBalancer.debugInfo();
-    loadBalancer.addServer(3);
-    loadBalancer.debugInfo();
-    loadBalancer.addServer(4);
-    loadBalancer.debugInfo();
+    /**
+     * PARAMETERS TO BE PASSED AS COMMAND LINE ARGUMENTS
+     * 
+     * IP => IP address of the LoadBalancer
+     * 
+     * PORT => PORT on which LoadBalancer listens for request
+     */
 
-    System.out.println("Server position for key(5): " + loadBalancer.getCorrectServer(5));
-    System.out.println("Server position for key(1): " + loadBalancer.getCorrectServer(1));
-    System.out.println("Server position for key(0): " + loadBalancer.getCorrectServer(0));
-    System.out.println("Server position for key(12): " + loadBalancer.getCorrectServer(12));
-
-    // loadBalancer.removeServer(3);
-    // loadBalancer.debugInfo();
-
-    // System.out.println("Server position for key(5): " +
-    // loadBalancer.getCorrectServer(5));
-    // System.out.println("Server position for key(1): " +
-    // loadBalancer.getCorrectServer(1));
-    // System.out.println("Server position for key(0): " +
-    // loadBalancer.getCorrectServer(0));
-    // System.out.println("Server position for key(12): " +
-    // loadBalancer.getCorrectServer(12));
-
-    for (int j = 1; j <= 30; j++) {
-      System.out.println("Putting " + j + " in server id: " + loadBalancer.getCorrectServer(j));
-      loadBalancer.put(j, j * 10 + 1);
-    }
-
-    for (int j = 1; j <= 30; j++) {
-      System.out.println(j + ": " + loadBalancer.get(j));
+    try {
+      LoadBalancer loadBalancer = new LoadBalancer(args[0], Integer.valueOf(args[1]));
+      loadBalancer.initiate();
+    } catch (NumberFormatException e) {
+      // TODO: change this if required in future
+      e.printStackTrace();
     }
   }
 }

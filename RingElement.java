@@ -1,19 +1,19 @@
 
 public class RingElement implements Comparable<RingElement> {
   private int position;
-  private int serverID;
+  private ServerInfo serverInfo;
 
-  public RingElement(int position, int serverID) {
+  public RingElement(int position, ServerInfo serverInfo) {
     this.position = position;
-    this.serverID = serverID;
+    this.serverInfo = serverInfo;
   }
 
   public int getPosition() {
     return position;
   }
 
-  public int getServerID() {
-    return serverID;
+  public ServerInfo getServerInfo() {
+    return serverInfo;
   }
 
   @Override
@@ -38,8 +38,7 @@ public class RingElement implements Comparable<RingElement> {
 
   @Override
   public String toString() {
-    // TODO Auto-generated method stub
-    return ("(" + this.position + " " + this.serverID + ")");
+    return ("(" + this.position + " " + this.serverInfo + ")");
   }
 
 }
